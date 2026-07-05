@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Админка</title>
+  <style>
+    :root {
+      --stage:  #16130d;
+      --panel:  #1f1a12;
+      --edge:   #3a3020;
+      --ink:    #f3ead4;
+      --muted:  #9a8f74;
+      --amber:  #f4b942;
+      --amber-d:#c9902a;
+      --ok:     #7fd48a;
+      --err:    #f08a7a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      background: radial-gradient(120% 90% at 50% -10%, #241d12 0%, var(--stage) 60%);
+      color: var(--ink);
+      font-family: "Georgia", "Times New Roman", serif;
+      padding: 40px 24px;
+      display: flex; justify-content: center;
+    }
+    .wrap { width: 100%; max-width: 720px; }
+    .top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+    .eyebrow {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+      color: var(--amber); margin: 0;
+    }
+    h1 { margin: 4px 0 0; font-size: 28px; font-weight: 700; }
+    .card {
+      background: var(--panel); border: 1px solid var(--edge); border-radius: 18px;
+      padding: 28px 30px; margin-bottom: 24px;
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,.8);
+    }
+    .card h2 { margin: 0 0 16px; font-size: 18px; font-weight: 700; }
+    .status { font-size: 14px; margin-bottom: 16px; }
+    .status.connected { color: var(--ok); }
+    .status.disconnected { color: var(--muted); }
+
+    label {
+      display: block; margin-bottom: 8px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    }
+    input, select {
+      width: 100%; padding: 12px 14px;
+      background: #12100b; color: var(--ink);
+      border: 1px solid var(--edge); border-radius: 10px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px;
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(244,185,66,.15); }
+
+    button {
+      padding: 12px 18px;
+      background: var(--amber); color: #221a06;
+      border: 0; border-radius: 10px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 13px; letter-spacing: .06em; font-weight: 700; text-transform: uppercase;
+      cursor: pointer; transition: background .15s, transform .05s;
+    }
+    button:hover { background: var(--amber-d); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .55; cursor: default; }
+    button.secondary {
+      background: transparent; color: var(--muted); border: 1px solid var(--edge);
+      padding: 8px 12px; font-size: 12px;
+    }
+    button.secondary:hover { background: transparent; color: var(--ink); border-color: var(--muted); }
+    button.danger:hover { color: var(--err); border-color: var(--err); }
+
+    .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .row > div { flex: 1 1 180px; }
+
+    .oauth-panel {
+      margin-top: 16px; padding: 16px; border: 1px dashed var(--edge); border-radius: 12px;
+      font-size: 14px; display: none;
+    }
+    .oauth-panel .code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 20px; letter-spacing: .1em; color: var(--amber); margin: 8px 0;
+    }
+    .msg { margin-top: 12px; min-height: 18px; font-size: 13px; color: var(--err); }
+    .msg:empty { margin-top: 0; min-height: 0; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; padding: 8px 6px; color: var(--muted); font-size: 12px;
+         text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--edge); }
+    td { padding: 10px 6px; border-bottom: 1px solid var(--edge); vertical-align: middle; }
+    tr:last-child td { border-bottom: 0; }
+    td a { color: var(--muted); text-decoration: none; word-break: break-all; }
+    td a:hover { color: var(--amber); text-decoration: underline; }
+    .empty { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <p class="eyebrow">Я.Музыка</p>
+        <h1>Админка</h1>
+      </div>
+      <form method="post" action="{{ url_for('admin_logout') }}">
+        <button type="submit" class="secondary">Выйти</button>
+      </form>
+    </div>
+
+    <section class="card">
+      <h2>Аккаунт Я.Музыки</h2>
+      {% if connected %}
+        <p class="status connected">Подключено{{ ' как ' ~ account_label if account_label else '' }}</p>
+      {% else %}
+        <p class="status disconnected">Не подключено</p>
+      {% endif %}
+      <button id="oauth-start" type="button">{{ "Переавторизоваться" if connected else "Войти через Яндекс" }}</button>
+
+      <div class="oauth-panel" id="oauth-panel">
+        <p>Открой ссылку и подтверди код:</p>
+        <p><a id="oauth-url" href="#" target="_blank" rel="noopener noreferrer"></a></p>
+        <p class="code" id="oauth-code"></p>
+        <p>Жду подтверждения…</p>
+      </div>
+      <p class="msg" id="oauth-msg"></p>
+    </section>
+
+    <section class="card">
+      <h2>Новая ссылка для сбора треков</h2>
+      {% if connected %}
+        <div class="row">
+          <div>
+            <label for="link-label">Название</label>
+            <input id="link-label" type="text" placeholder="Вечеринка у Макса">
+          </div>
+          <div>
+            <label for="playlist-select">Плейлист</label>
+            <select id="playlist-select"><option>Загружаю…</option></select>
+          </div>
+          <div style="flex: 0 0 auto;">
+            <button id="create-link" type="button">Создать ссылку</button>
+          </div>
+        </div>
+        <p class="msg" id="create-msg"></p>
+      {% else %}
+        <p class="empty">Сначала войди через Яндекс.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Ссылки</h2>
+      <table>
+        <thead>
+          <tr><th>Название</th><th>Плейлист</th><th>Ссылка</th><th></th><th></th></tr>
+        </thead>
+        <tbody id="links-tbody">
+          {% for slug, link in links.items() %}
+          <tr data-slug="{{ slug }}">
+            <td>{{ link.label }}</td>
+            <td>{{ link.playlist_title or link.playlist }}</td>
+            <td><a href="{{ url_for('collect_page', slug=slug) }}" target="_blank" rel="noopener noreferrer"
+                    id="url-text-{{ slug }}"></a></td>
+            <td><button type="button" class="secondary copy-btn" data-url="{{ url_for('collect_page', slug=slug) }}">Копировать</button></td>
+            <td><button type="button" class="secondary danger delete-btn" data-slug="{{ slug }}">Удалить</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if not links %}<p class="empty" id="links-empty">Пока нет ни одной ссылки.</p>{% endif %}
+    </section>
+  </div>
+
+  <script>
+    const connected = {{ connected | tojson }};
+
+    // Абсолютные URL ссылок — простановка через JS, чтобы не хардкодить хост в шаблоне.
+    document.querySelectorAll('[id^="url-text-"]').forEach(a => {
+      a.textContent = window.location.origin + a.getAttribute("href");
+    });
+
+    // --- OAuth ---
+    const oauthBtn   = document.getElementById("oauth-start");
+    const oauthPanel = document.getElementById("oauth-panel");
+    const oauthUrl   = document.getElementById("oauth-url");
+    const oauthCode  = document.getElementById("oauth-code");
+    const oauthMsg   = document.getElementById("oauth-msg");
+
+    let pollTimer = null;
+
+    async function startOAuth() {
+      oauthBtn.disabled = true;
+      oauthMsg.textContent = "";
+      try {
+        const res = await fetch("/admin/oauth/start", { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) {
+          oauthMsg.textContent = data.error || "Не удалось начать вход.";
+          oauthBtn.disabled = false;
+          return;
+        }
+        oauthUrl.href = data.verification_url;
+        oauthUrl.textContent = data.verification_url;
+        oauthCode.textContent = data.user_code;
+        oauthPanel.style.display = "block";
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollOAuth, Math.max(data.interval, 1) * 1000);
+      } catch (e) {
+        oauthMsg.textContent = "Сервер недоступен.";
+        oauthBtn.disabled = false;
+      }
+    }
+
+    async function pollOAuth() {
+      try {
+        const res = await fetch("/admin/oauth/poll", { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) {
+          clearInterval(pollTimer);
+          oauthMsg.textContent = data.error || "Ошибка входа.";
+          oauthPanel.style.display = "none";
+          oauthBtn.disabled = false;
+          return;
+        }
+        if (data.status === "success") {
+          clearInterval(pollTimer);
+          window.location.reload();
+        } else if (data.status === "error") {
+          clearInterval(pollTimer);
+          oauthMsg.textContent = data.error || "Не удалось войти.";
+          oauthPanel.style.display = "none";
+          oauthBtn.disabled = false;
+        }
+        // "pending" — просто ждём следующего тика
+      } catch (e) {
+        // сеть моргнула — не останавливаем поллинг
+      }
+    }
+
+    oauthBtn.addEventListener("click", startOAuth);
+
+    // --- Плейлисты и создание ссылки ---
+    if (connected) {
+      const playlistSelect = document.getElementById("playlist-select");
+      const linkLabel      = document.getElementById("link-label");
+      const createBtn      = document.getElementById("create-link");
+      const createMsg      = document.getElementById("create-msg");
+
+      async function loadPlaylists() {
+        playlistSelect.innerHTML = "";
+        playlistSelect.appendChild(el("option", null, "Загружаю…"));
+        try {
+          const res = await fetch("/admin/playlists");
+          const data = await res.json();
+          if (!data.ok || !data.playlists.length) {
+            playlistSelect.innerHTML = "";
+            playlistSelect.appendChild(el("option", null, data.ok ? "Нет плейлистов" : "Ошибка загрузки"));
+            return;
+          }
+          playlistSelect.innerHTML = "";
+          data.playlists.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.kind;
+            opt.textContent = `${p.title} (${p.track_count ?? 0})`;
+            playlistSelect.appendChild(opt);
+          });
+        } catch (e) {
+          playlistSelect.innerHTML = "";
+          playlistSelect.appendChild(el("option", null, "Сервер недоступен"));
+        }
+      }
+
+      async function createLink() {
+        const label = linkLabel.value.trim();
+        const kind = playlistSelect.value;
+        const playlistTitle = playlistSelect.options[playlistSelect.selectedIndex]
+          ? playlistSelect.options[playlistSelect.selectedIndex].textContent
+          : "";
+        createMsg.textContent = "";
+
+        if (!label) { createMsg.textContent = "Введи название."; return; }
+        if (!kind) { createMsg.textContent = "Выбери плейлист."; return; }
+
+        createBtn.disabled = true;
+        try {
+          const res = await fetch("/admin/links", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label, playlist_kind: kind, playlist_title: playlistTitle })
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            createMsg.textContent = data.error || "Не удалось создать ссылку.";
+            return;
+          }
+          addLinkRow(data.slug, label, playlistTitle, data.url);
+          linkLabel.value = "";
+        } catch (e) {
+          createMsg.textContent = "Сервер недоступен.";
+        } finally {
+          createBtn.disabled = false;
+        }
+      }
+
+      createBtn.addEventListener("click", createLink);
+      loadPlaylists();
+    }
+
+    // --- Таблица ссылок ---
+    const linksTable = document.getElementById("links-tbody");
+    const linksEmpty = document.getElementById("links-empty");
+
+    function el(tag, className, text) {
+      const e = document.createElement(tag);
+      if (className) e.className = className;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+
+    function addLinkRow(slug, label, playlistTitle, url) {
+      if (linksEmpty) linksEmpty.style.display = "none";
+
+      const tr = document.createElement("tr");
+      tr.dataset.slug = slug;
+
+      const tdUrl = document.createElement("td");
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = window.location.origin + url;
+      tdUrl.appendChild(a);
+
+      const tdCopy = document.createElement("td");
+      const copyBtn = el("button", "secondary copy-btn", "Копировать");
+      copyBtn.type = "button";
+      copyBtn.dataset.url = url;
+      tdCopy.appendChild(copyBtn);
+
+      const tdDelete = document.createElement("td");
+      const delBtn = el("button", "secondary danger delete-btn", "Удалить");
+      delBtn.type = "button";
+      delBtn.dataset.slug = slug;
+      tdDelete.appendChild(delBtn);
+
+      tr.append(el("td", null, label), el("td", null, playlistTitle), tdUrl, tdCopy, tdDelete);
+      linksTable.prepend(tr);
+    }
+
+    async function deleteLink(slug, tr) {
+      if (!confirm("Удалить ссылку?")) return;
+      try {
+        const res = await fetch(`/admin/links/${slug}/delete`, { method: "POST" });
+        const data = await res.json();
+        if (data.ok) tr.remove();
+      } catch (e) {}
+    }
+
+    linksTable.addEventListener("click", (e) => {
+      const copyBtn = e.target.closest(".copy-btn");
+      if (copyBtn) {
+        const url = window.location.origin + copyBtn.dataset.url;
+        navigator.clipboard.writeText(url);
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = "Скопировано";
+        setTimeout(() => { copyBtn.textContent = prev; }, 1500);
+        return;
+      }
+      const delBtn = e.target.closest(".delete-btn");
+      if (delBtn) deleteLink(delBtn.dataset.slug, delBtn.closest("tr"));
+    });
+  </script>
+</body>
+</html>

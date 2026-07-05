@@ -5,8 +5,14 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"          # снаружи:внутри. За nginx можно оставить как есть.
+    volumes:
+      # Токен админки и шаринг-ссылки переживают пересборку образа только так.
+      - ./data:/app/data
     environment:
       # Значения берутся из файла .env рядом с этим docker-compose.yml.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
+      STATE_FILE: /app/data/state.json
       YM_TOKEN: ${YM_TOKEN}
       YM_PLAYLIST: ${YM_PLAYLIST}
     healthcheck:

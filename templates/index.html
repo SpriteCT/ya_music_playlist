@@ -143,7 +143,7 @@
 </head>
 <body>
   <main class="card">
-    <p class="eyebrow">Я.Музыка · очередь плейлиста</p>
+    <p class="eyebrow">Я.Музыка · {{ link_label }}</p>
     <h1>Скинуть трек в плейлист</h1>
     <p class="sub">Вставь ссылку на трек или альбом из Я.Музыки — он уедет в общий плейлист.</p>
 
@@ -178,6 +178,8 @@
   </dialog>
 
   <script>
+    const apiBase = {{ api_base | tojson }};
+
     const input  = document.getElementById("link");
     const button = document.getElementById("go");
     const msg    = document.getElementById("msg");
@@ -201,7 +203,7 @@
       button.textContent = "Добавляю…";
 
       try {
-        const res = await fetch("/add", {
+        const res = await fetch(apiBase + "/add", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ link })
@@ -234,7 +236,7 @@
       button.textContent = "Загружаю альбом…";
 
       try {
-        const res = await fetch("/album/preview", {
+        const res = await fetch(apiBase + "/album/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ link })
@@ -320,7 +322,7 @@
       albumConfirm.textContent = "Добавляю…";
 
       try {
-        const res = await fetch("/album/add", {
+        const res = await fetch(apiBase + "/album/add", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ link: pendingAlbumLink })
@@ -396,7 +398,7 @@
 
     async function loadPlaylist() {
       try {
-        const res = await fetch("/tracks");
+        const res = await fetch(apiBase + "/tracks");
         const data = await res.json();
 
         if (!data.ok) {

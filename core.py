@@ -14,6 +14,8 @@ import re
 from dotenv import load_dotenv
 from yandex_music import Client
 
+import store
+
 # Подхватываем .env, если он есть рядом (для локального запуска без Docker —
 # там переменные окружения передаёт docker-compose, а не этот вызов).
 load_dotenv()
@@ -128,15 +130,62 @@ def parse_playlist_ref(ref):
     raise PlaylistError(f"Не понял, что за плейлист: {ref!r}")
 
 
+def effective_token() -> str | None:
+    """
+    Токен для работы с API: приоритет у токена, полученного через OAuth-логин
+    в админке (/admin) и сохранённого в store, иначе — бутстрап из YM_TOKEN.
+    """
+    token = store.get_token()
+    if token:
+        return token
+    if TOKEN and TOKEN != "ВСТАВЬ_СЮДА_ТОКЕН":
+        return TOKEN
+    return None
+
+
 def make_client(token: str | None = None) -> Client:
     """Создаёт и инициализирует клиент Я.Музыки."""
-    token = token or TOKEN
-    if not token or token == "ВСТАВЬ_СЮДА_ТОКЕН":
+    token = token or effective_token()
+    if not token:
         raise RuntimeError(
-            "Не задан токен. Укажи переменную окружения YM_TOKEN "
-            "или впиши токен в core.py. Получить токен: python get_token.py"
+            "Не задан токен. Залогинься в /admin через Яндекс либо укажи "
+            "переменную окружения YM_TOKEN. Получить токен вручную: python get_token.py"
         )
     return Client(token).init()
+
+
+_shared_client: Client | None = None
+_shared_client_token: str | None = None
+
+
+def get_shared_client() -> Client:
+    """
+    Общий клиент Я.Музыки на процесс. Пересобирается, если токен в store
+    изменился — например, админ только что залогинился через /admin.
+    Это же решает переинициализацию в разных воркерах gunicorn: у каждого
+    свой кэш, но каждый сверяется с общим файлом состояния при обращении.
+    """
+    global _shared_client, _shared_client_token
+    token = effective_token()
+    if _shared_client is None or token != _shared_client_token:
+        _shared_client = make_client(token)
+        _shared_client_token = token
+    return _shared_client
+
+
+def list_own_playlists(client: Client | None = None) -> list:
+    """Плейлисты аккаунта владельца токена — для выбора в админке."""
+    client = client or get_shared_client()
+    playlists = client.users_playlists_list() or []
+    return [
+        {
+            "kind": p.kind,
+            "title": p.title,
+            "track_count": p.track_count,
+            "visibility": p.visibility,
+        }
+        for p in playlists
+    ]
 
 
 def resolve_playlist(client: Client, ref=PLAYLIST):

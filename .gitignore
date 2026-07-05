@@ -149,6 +149,10 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Состояние админки (токен, шаринг-ссылки) — секрет, как и .env
+state.json
+/data/
+
 # Environments
 .env
 .envrc

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Я.Музыка · сбор треков в плейлист</title>
+  <style>
+    :root {
+      --stage:  #16130d;
+      --panel:  #1f1a12;
+      --edge:   #3a3020;
+      --ink:    #f3ead4;
+      --muted:  #9a8f74;
+      --amber:  #f4b942;
+      --amber-d:#c9902a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      display: grid; place-items: center;
+      background: radial-gradient(120% 90% at 50% -10%, #241d12 0%, var(--stage) 60%);
+      color: var(--ink);
+      font-family: "Georgia", "Times New Roman", serif;
+      padding: 24px;
+    }
+    .card {
+      width: 100%; max-width: 560px;
+      background: var(--panel);
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      padding: 44px 38px;
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,.8);
+    }
+    .eyebrow {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+      color: var(--amber);
+      margin: 0 0 14px;
+    }
+    h1 { margin: 0 0 16px; font-size: 30px; line-height: 1.2; font-weight: 700; }
+    p { margin: 0 0 16px; color: var(--ink); font-size: 16px; line-height: 1.6; }
+    p.muted { color: var(--muted); font-size: 14px; }
+    ul { margin: 0 0 20px; padding-left: 20px; color: var(--ink); font-size: 15px; line-height: 1.7; }
+    ul li::marker { color: var(--amber); }
+    .footer {
+      margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--edge);
+      font-size: 13px;
+    }
+    .footer a {
+      color: var(--muted); text-decoration: none;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      letter-spacing: .05em;
+    }
+    .footer a:hover { color: var(--amber); text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <p class="eyebrow">Я.Музыка · сбор треков</p>
+    <h1>Общий плейлист, который собирают все</h1>
+    <p>
+      Это сервис для сбора треков в плейлисты Я.Музыки: владелец плейлиста
+      создаёт ссылку и делится ей — а дальше любой, у кого есть ссылка,
+      может закинуть туда трек или целый альбом, без регистрации и логина.
+    </p>
+    <ul>
+      <li>Вставляешь ссылку на трек или альбом из Я.Музыки — он уходит
+        в плейлист, привязанный к этой странице.</li>
+      <li>Видно, что уже в плейлисте, и можно искать по нему.</li>
+      <li>Дубликаты не добавляются повторно.</li>
+    </ul>
+    <p class="muted">Если тебе дали ссылку на конкретный сбор — переходи по ней напрямую.</p>
+
+    <div class="footer">
+      <a href="/admin/login">Владелец плейлиста? Войти в админку →</a>
+    </div>
+  </main>
+</body>
+</html>
