@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY core.py web.py store.py ./
 COPY templates ./templates
 
-# Запуск от непривилегированного пользователя. /app/data — под state.json
+# Запуск от непривилегированного пользователя. /app/data — под state.db
 # (токены пользователей + шаринг-ссылки), монтируется как volume в
 # docker-compose.yml, поэтому должен быть доступен appuser на запись.
 RUN useradd --create-home appuser && \

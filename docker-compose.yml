@@ -12,7 +12,7 @@ services:
       # Значения берутся из файла .env рядом с этим docker-compose.yml.
       FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
-      STATE_FILE: /app/data/state.json
+      STATE_FILE: /app/data/state.db
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else sys.exit(1)"]
       interval: 30s

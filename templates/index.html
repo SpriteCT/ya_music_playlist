@@ -112,6 +112,8 @@
     .tracklist li:last-child { border-bottom: 0; }
     .tracklist .n { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; flex: 0 0 auto; }
     .tracklist .artists { color: var(--muted); }
+    .tracklist a.title { color: var(--ink); text-decoration: none; }
+    .tracklist a.title:hover { color: var(--amber); text-decoration: underline; }
     .playlist .empty, .playlist .loading, .playlist .error {
       font-size: 13px; color: var(--muted);
     }
@@ -379,7 +381,9 @@
         const n = document.createElement("span");
         n.className = "n";
         n.textContent = String(t.n).padStart(2, "0");
-        const text = document.createElement("span");
+        const text = document.createElement(t.url ? "a" : "span");
+        text.className = "title";
+        if (t.url) { text.href = t.url; text.target = "_blank"; text.rel = "noopener noreferrer"; }
         text.textContent = t.title;
         const artists = document.createElement("span");
         artists.className = "artists";

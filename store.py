@@ -2,101 +2,117 @@
 Персистентное состояние: пользователи (Я.Музыка аккаунты, вошедшие через
 OAuth) и их шаринг-ссылки (slug -> плейлист конкретного пользователя).
 
-Простое JSON-хранилище — без БД, в духе остального проекта. Путь настраивается
-через STATE_FILE (по умолчанию state.json рядом с проектом). В Docker должен
-быть смонтирован как volume, иначе состояние теряется при пересборке образа.
+SQLite-хранилище (state.db). Путь настраивается через STATE_FILE (по
+умолчанию state.db рядом с проектом). В Docker должен быть смонтирован как
+volume, иначе состояние теряется при пересборке образа.
 """
 
-import json
 import os
 import secrets
-import stat
+import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
-_PATH = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(__file__), "state.json"))
+_PATH = os.environ.get("STATE_FILE", os.path.join(os.path.dirname(__file__), "state.db"))
 _LOCK = threading.Lock()
 
 
-def _empty_state() -> dict:
-    return {"users": {}, "links": {}}
-
-
-def _load() -> dict:
+@contextmanager
+def _db():
+    conn = sqlite3.connect(_PATH)
+    conn.row_factory = sqlite3.Row
     try:
-        with open(_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return _empty_state()
-
-    data.setdefault("users", {})
-    data.setdefault("links", {})
-    return data
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def _save(data: dict) -> None:
-    # Атомарная запись: пишем во временный файл рядом и переименовываем —
-    # чтобы конкурентное чтение никогда не увидело битый/недописанный JSON.
-    tmp_path = f"{_PATH}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    # Файл содержит боевые токены всех пользователей — читать может только
-    # владелец процесса. На Windows это no-op (нет POSIX-битов), но безвредно;
-    # в Docker/Linux прод-деплое реально ограничивает права.
-    os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-    os.replace(tmp_path, _PATH)
+def _init_db() -> None:
+    with _db() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                uid TEXT PRIMARY KEY,
+                token TEXT NOT NULL,
+                login TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS links (
+                slug TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                playlist TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                created TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_links_owner ON links(owner)")
+
+
+_init_db()
 
 
 def get_user(uid: str) -> dict | None:
     """Возвращает {token, login} для аккаунта или None, если не логинился."""
-    return _load().get("users", {}).get(str(uid))
+    with _db() as conn:
+        row = conn.execute("SELECT token, login FROM users WHERE uid = ?", (str(uid),)).fetchone()
+    return {"token": row["token"], "login": row["login"]} if row else None
 
 
 def set_user(uid: str, token: str, login: str = "") -> None:
-    with _LOCK:
-        data = _load()
-        data["users"][str(uid)] = {"token": token, "login": login}
-        _save(data)
+    with _LOCK, _db() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (uid, token, login) VALUES (?, ?, ?)
+            ON CONFLICT(uid) DO UPDATE SET token = excluded.token, login = excluded.login
+            """,
+            (str(uid), token, login),
+        )
+
+
+def _row_to_link(row: sqlite3.Row) -> dict:
+    return {"label": row["label"], "playlist": row["playlist"], "owner": row["owner"], "created": row["created"]}
 
 
 def list_links_for_user(uid: str) -> dict:
     """Возвращает {slug: {label, playlist, owner, created}} только этого пользователя."""
-    uid = str(uid)
-    return {
-        slug: link
-        for slug, link in _load().get("links", {}).items()
-        if link.get("owner") == uid
-    }
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT slug, label, playlist, owner, created FROM links WHERE owner = ?",
+            (str(uid),),
+        ).fetchall()
+    return {row["slug"]: _row_to_link(row) for row in rows}
 
 
 def get_link(slug: str) -> dict | None:
-    return _load().get("links", {}).get(slug)
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT slug, label, playlist, owner, created FROM links WHERE slug = ?", (slug,)
+        ).fetchone()
+    return _row_to_link(row) if row else None
 
 
 def add_link(owner_uid: str, playlist_ref: str, label: str) -> str:
     """label — название плейлиста на момент создания ссылки (для отображения)."""
-    with _LOCK:
-        data = _load()
+    with _LOCK, _db() as conn:
         slug = secrets.token_urlsafe(6)
-        while slug in data["links"]:
+        while conn.execute("SELECT 1 FROM links WHERE slug = ?", (slug,)).fetchone():
             slug = secrets.token_urlsafe(6)
-        data["links"][slug] = {
-            "label": label,
-            "playlist": playlist_ref,
-            "owner": str(owner_uid),
-            "created": datetime.now(timezone.utc).isoformat(),
-        }
-        _save(data)
+        conn.execute(
+            "INSERT INTO links (slug, label, playlist, owner, created) VALUES (?, ?, ?, ?, ?)",
+            (slug, label, playlist_ref, str(owner_uid), datetime.now(timezone.utc).isoformat()),
+        )
     return slug
 
 
 def delete_link(slug: str, owner_uid: str) -> bool:
     """Удаляет ссылку, только если она принадлежит owner_uid. Возвращает успех."""
-    with _LOCK:
-        data = _load()
-        link = data["links"].get(slug)
-        if not link or link.get("owner") != str(owner_uid):
-            return False
-        data["links"].pop(slug)
-        _save(data)
-        return True
+    with _LOCK, _db() as conn:
+        cur = conn.execute("DELETE FROM links WHERE slug = ? AND owner = ?", (slug, str(owner_uid)))
+        return cur.rowcount > 0

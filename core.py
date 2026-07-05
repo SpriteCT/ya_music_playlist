@@ -273,6 +273,7 @@ def get_playlist_tracks(client: Client, playlist_ref) -> dict:
         {
             "title": t.title or f"track {t.id}",
             "artists": ", ".join(a.name for a in t.artists) or "—",
+            "url": f"https://music.yandex.ru/album/{t.albums[0].id}/track/{t.id}" if t.albums else "",
         }
         for t in full_tracks
     ]
