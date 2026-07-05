@@ -245,6 +245,15 @@ def playlist_url(playlist) -> str:
     return ""
 
 
+def playlist_url_from_kind(owner_uid: str, kind: str) -> str:
+    """
+    То же самое, но без обращения к API: kind и owner_uid уже известны
+    (сохранены в шаринг-ссылке при её создании через /me). Плейлисты,
+    выбираемые в личном кабинете, всегда имеют числовой kind — не UUID.
+    """
+    return f"https://music.yandex.ru/users/{owner_uid}/playlists/{kind}"
+
+
 def get_playlist_tracks(client: Client, playlist_ref) -> dict:
     """
     Возвращает содержимое плейлиста: название, ссылку и список треков

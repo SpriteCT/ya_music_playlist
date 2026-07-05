@@ -60,7 +60,7 @@ def set_user(uid: str, token: str, login: str = "") -> None:
 
 
 def list_links_for_user(uid: str) -> dict:
-    """Возвращает {slug: {label, playlist, playlist_title, owner, created}} только этого пользователя."""
+    """Возвращает {slug: {label, playlist, owner, created}} только этого пользователя."""
     uid = str(uid)
     return {
         slug: link
@@ -73,7 +73,8 @@ def get_link(slug: str) -> dict | None:
     return _load().get("links", {}).get(slug)
 
 
-def add_link(owner_uid: str, label: str, playlist_ref: str, playlist_title: str = "") -> str:
+def add_link(owner_uid: str, playlist_ref: str, label: str) -> str:
+    """label — название плейлиста на момент создания ссылки (для отображения)."""
     with _LOCK:
         data = _load()
         slug = secrets.token_urlsafe(6)
@@ -82,7 +83,6 @@ def add_link(owner_uid: str, label: str, playlist_ref: str, playlist_title: str 
         data["links"][slug] = {
             "label": label,
             "playlist": playlist_ref,
-            "playlist_title": playlist_title,
             "owner": str(owner_uid),
             "created": datetime.now(timezone.utc).isoformat(),
         }

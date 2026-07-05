@@ -43,6 +43,8 @@
       margin: 0 0 8px; font-size: 30px; line-height: 1.15; font-weight: 700;
     }
     p.sub { margin: 0 0 26px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    p.sub a { color: var(--amber); text-decoration: none; font-weight: 700; }
+    p.sub a:hover { text-decoration: underline; }
 
     label {
       display: block; margin-bottom: 8px;
@@ -145,7 +147,10 @@
   <main class="card">
     <p class="eyebrow">Я.Музыка · {{ link_label }}</p>
     <h1>Скинуть трек в плейлист</h1>
-    <p class="sub">Вставь ссылку на трек или альбом из Я.Музыки — он уедет в общий плейлист.</p>
+    <p class="sub">
+      Вставь ссылку на трек или альбом из Я.Музыки — он уедет в плейлист
+      <a href="{{ playlist_url }}" target="_blank" rel="noopener noreferrer">{{ link_label }}</a>.
+    </p>
 
     <label for="link">Ссылка на трек или альбом</label>
     <input id="link" type="url" autocomplete="off" spellcheck="false"

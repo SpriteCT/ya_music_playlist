@@ -33,6 +33,7 @@ from core import (
     get_client_for_user,
     get_playlist_tracks,
     list_own_playlists,
+    playlist_url_from_kind,
     preview_album,
     TrackLinkError,
 )
@@ -229,13 +230,12 @@ def me_playlists():
 def me_create_link():
     uid = session["user_id"]
     data = request.get_json(silent=True) or {}
-    label = (data.get("label") or "").strip()
     playlist_kind = data.get("playlist_kind")
     playlist_title = (data.get("playlist_title") or "").strip()
-    if not label or playlist_kind is None:
-        return jsonify(ok=False, error="Нужны название и плейлист"), 400
+    if playlist_kind is None or not playlist_title:
+        return jsonify(ok=False, error="Выбери плейлист"), 400
 
-    slug = store.add_link(uid, label, str(playlist_kind), playlist_title)
+    slug = store.add_link(uid, str(playlist_kind), playlist_title)
     return jsonify(ok=True, slug=slug, url=url_for("collect_page", slug=slug))
 
 
@@ -255,7 +255,12 @@ def me_delete_link(slug):
 @app.route("/s/<slug>")
 def collect_page(slug):
     link = _get_link_or_404(slug)
-    return render_template("index.html", api_base=f"/s/{slug}", link_label=link["label"])
+    return render_template(
+        "index.html",
+        api_base=f"/s/{slug}",
+        link_label=link["label"],
+        playlist_url=playlist_url_from_kind(link["owner"], link["playlist"]),
+    )
 
 
 @app.route("/s/<slug>/add", methods=["POST"])

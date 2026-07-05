@@ -110,10 +110,6 @@
       <h2>Новая ссылка для сбора треков</h2>
       <div class="row">
         <div>
-          <label for="link-label">Название</label>
-          <input id="link-label" type="text" placeholder="Вечеринка у Макса">
-        </div>
-        <div>
           <label for="playlist-select">Плейлист</label>
           <select id="playlist-select"><option>Загружаю…</option></select>
         </div>
@@ -128,13 +124,12 @@
       <h2>Ссылки</h2>
       <table>
         <thead>
-          <tr><th>Название</th><th>Плейлист</th><th>Ссылка</th><th></th><th></th></tr>
+          <tr><th>Плейлист</th><th>Ссылка</th><th></th><th></th></tr>
         </thead>
         <tbody id="links-tbody">
           {% for slug, link in links.items() %}
           <tr data-slug="{{ slug }}">
             <td>{{ link.label }}</td>
-            <td>{{ link.playlist_title or link.playlist }}</td>
             <td><a href="{{ url_for('collect_page', slug=slug) }}" target="_blank" rel="noopener noreferrer"
                     id="url-text-{{ slug }}"></a></td>
             <td><button type="button" class="secondary copy-btn" data-url="{{ url_for('collect_page', slug=slug) }}">Копировать</button></td>
@@ -155,7 +150,6 @@
 
     // --- Плейлисты и создание ссылки ---
     const playlistSelect = document.getElementById("playlist-select");
-    const linkLabel      = document.getElementById("link-label");
     const createBtn      = document.getElementById("create-link");
     const createMsg      = document.getElementById("create-msg");
 
@@ -181,6 +175,7 @@
         data.playlists.forEach(p => {
           const opt = document.createElement("option");
           opt.value = p.kind;
+          opt.dataset.title = p.title;
           opt.textContent = `${p.title} (${p.track_count ?? 0})`;
           playlistSelect.appendChild(opt);
         });
@@ -191,30 +186,26 @@
     }
 
     async function createLink() {
-      const label = linkLabel.value.trim();
       const kind = playlistSelect.value;
-      const playlistTitle = playlistSelect.options[playlistSelect.selectedIndex]
-        ? playlistSelect.options[playlistSelect.selectedIndex].textContent
-        : "";
+      const selected = playlistSelect.options[playlistSelect.selectedIndex];
+      const playlistTitle = selected ? selected.dataset.title : "";
       createMsg.textContent = "";
 
-      if (!label) { createMsg.textContent = "Введи название."; return; }
-      if (!kind) { createMsg.textContent = "Выбери плейлист."; return; }
+      if (!kind || !playlistTitle) { createMsg.textContent = "Выбери плейлист."; return; }
 
       createBtn.disabled = true;
       try {
         const res = await fetch("/me/links", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label, playlist_kind: kind, playlist_title: playlistTitle })
+          body: JSON.stringify({ playlist_kind: kind, playlist_title: playlistTitle })
         });
         const data = await res.json();
         if (!data.ok) {
           createMsg.textContent = data.error || "Не удалось создать ссылку.";
           return;
         }
-        addLinkRow(data.slug, label, playlistTitle, data.url);
-        linkLabel.value = "";
+        addLinkRow(data.slug, playlistTitle, data.url);
       } catch (e) {
         createMsg.textContent = "Сервер недоступен.";
       } finally {
@@ -229,7 +220,7 @@
     const linksTable = document.getElementById("links-tbody");
     const linksEmpty = document.getElementById("links-empty");
 
-    function addLinkRow(slug, label, playlistTitle, url) {
+    function addLinkRow(slug, playlistTitle, url) {
       if (linksEmpty) linksEmpty.style.display = "none";
 
       const tr = document.createElement("tr");
@@ -255,7 +246,7 @@
       delBtn.dataset.slug = slug;
       tdDelete.appendChild(delBtn);
 
-      tr.append(el("td", null, label), el("td", null, playlistTitle), tdUrl, tdCopy, tdDelete);
+      tr.append(el("td", null, playlistTitle), tdUrl, tdCopy, tdDelete);
       linksTable.prepend(tr);
     }
 
