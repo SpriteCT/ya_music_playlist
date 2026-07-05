@@ -77,6 +77,34 @@
     .msg.ok  { color: var(--ok); }
     .msg.err { color: var(--err); }
     .msg .track { color: var(--ink); }
+
+    .playlist {
+      margin-top: 34px; padding-top: 26px;
+      border-top: 1px solid var(--edge);
+    }
+    .playlist h2 {
+      margin: 0 0 14px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+      display: flex; align-items: baseline; justify-content: space-between;
+    }
+    .playlist h2 .count { color: var(--amber); }
+    .tracklist {
+      list-style: none; margin: 0; padding: 0;
+      max-height: 280px; overflow-y: auto;
+    }
+    .tracklist li {
+      padding: 9px 0; border-bottom: 1px solid var(--edge);
+      font-size: 14px; line-height: 1.4;
+      display: flex; gap: 8px;
+    }
+    .tracklist li:last-child { border-bottom: 0; }
+    .tracklist .n { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; flex: 0 0 auto; }
+    .tracklist .artists { color: var(--muted); }
+    .playlist .empty, .playlist .loading, .playlist .error {
+      font-size: 13px; color: var(--muted);
+    }
+    .playlist .error { color: var(--err); }
   </style>
 </head>
 <body>
@@ -91,6 +119,13 @@
     <button id="go">Добавить в плейлист</button>
 
     <div id="msg" class="msg" aria-live="polite"></div>
+
+    <section class="playlist">
+      <h2><span>Текущий плейлист</span><span class="count" id="playlist-count"></span></h2>
+      <div id="playlist-body">
+        <p class="loading">Загружаю…</p>
+      </div>
+    </section>
   </main>
 
   <script>
@@ -120,7 +155,10 @@
           msg.classList.add("ok");
           msg.innerHTML = (data.already_exists ? "Уже в плейлисте: " : "Добавлено: ")
                         + `<span class="track">${who}</span>`;
-          if (!data.already_exists) input.value = "";
+          if (!data.already_exists) {
+            input.value = "";
+            loadPlaylist();
+          }
         } else {
           msg.classList.add("err");
           msg.textContent = data.error || "Что-то пошло не так.";
@@ -136,6 +174,64 @@
 
     button.addEventListener("click", submit);
     input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+
+    const playlistBody  = document.getElementById("playlist-body");
+    const playlistCount = document.getElementById("playlist-count");
+
+    async function loadPlaylist() {
+      try {
+        const res = await fetch("/tracks");
+        const data = await res.json();
+
+        if (!data.ok) {
+          playlistBody.innerHTML = "";
+          playlistBody.appendChild(el("p", "error", data.error || "Не удалось загрузить плейлист."));
+          playlistCount.textContent = "";
+          return;
+        }
+
+        playlistCount.textContent = data.tracks.length ? `· ${data.tracks.length}` : "";
+
+        if (!data.tracks.length) {
+          playlistBody.innerHTML = "";
+          playlistBody.appendChild(el("p", "empty", "Пока пусто."));
+          return;
+        }
+
+        const list = document.createElement("ol");
+        list.className = "tracklist";
+        data.tracks.forEach((t, i) => {
+          const li = document.createElement("li");
+          const n = document.createElement("span");
+          n.className = "n";
+          n.textContent = String(i + 1).padStart(2, "0");
+          const text = document.createElement("span");
+          text.textContent = t.title;
+          const artists = document.createElement("span");
+          artists.className = "artists";
+          artists.textContent = " — " + t.artists;
+          text.appendChild(artists);
+          li.append(n, text);
+          list.appendChild(li);
+        });
+
+        playlistBody.innerHTML = "";
+        playlistBody.appendChild(list);
+      } catch (e) {
+        playlistBody.innerHTML = "";
+        playlistBody.appendChild(el("p", "error", "Сервер недоступен."));
+        playlistCount.textContent = "";
+      }
+    }
+
+    function el(tag, className, text) {
+      const e = document.createElement(tag);
+      e.className = className;
+      e.textContent = text;
+      return e;
+    }
+
+    loadPlaylist();
   </script>
 </body>
 </html>

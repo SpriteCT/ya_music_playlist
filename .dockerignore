@@ -5,5 +5,4 @@ __pycache__/
 .gitignore
 .env
 README.md
-cli.py
 get_token.py

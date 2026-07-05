@@ -11,7 +11,12 @@ https://github.com/MarshalX/yandex-music-api
 import os
 import re
 
+from dotenv import load_dotenv
 from yandex_music import Client
+
+# Подхватываем .env, если он есть рядом (для локального запуска без Docker —
+# там переменные окружения передаёт docker-compose, а не этот вызов).
+load_dotenv()
 
 
 # --- Настройки (можно захардкодить или задать через переменные окружения) ---
@@ -184,3 +189,27 @@ def add_track_to_playlist(
         "artists": artists,
         "playlist": playlist.title,
     }
+
+
+def get_playlist_tracks(client: Client | None = None, playlist_ref=PLAYLIST) -> dict:
+    """
+    Возвращает содержимое плейлиста: название и список треков (title, artists)
+    в том порядке, в котором они лежат в плейлисте (новые — первыми, т.к.
+    add_track_to_playlist вставляет в начало).
+    """
+    client = client or make_client()
+    playlist = resolve_playlist(client, playlist_ref)
+
+    short_tracks = playlist.tracks or []
+    if not short_tracks:
+        return {"playlist": playlist.title, "tracks": []}
+
+    full_tracks = client.tracks([t.track_id for t in short_tracks])
+    tracks = [
+        {
+            "title": t.title or f"track {t.id}",
+            "artists": ", ".join(a.name for a in t.artists) or "—",
+        }
+        for t in full_tracks
+    ]
+    return {"playlist": playlist.title, "tracks": tracks}

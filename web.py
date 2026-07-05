@@ -18,7 +18,13 @@
 
 from flask import Flask, jsonify, render_template, request
 
-from core import add_track_to_playlist, make_client, TrackLinkError, PLAYLIST
+from core import (
+    add_track_to_playlist,
+    get_playlist_tracks,
+    make_client,
+    TrackLinkError,
+    PLAYLIST,
+)
 
 app = Flask(__name__)
 
@@ -60,6 +66,16 @@ def add():
         return jsonify(ok=False, error=f"Не удалось добавить: {e}"), 500
 
     return jsonify(result)
+
+
+@app.route("/tracks")
+def tracks():
+    try:
+        result = get_playlist_tracks(client=get_client(), playlist_ref=PLAYLIST)
+    except Exception as e:  # noqa: BLE001
+        return jsonify(ok=False, error=f"Не удалось получить плейлист: {e}"), 500
+
+    return jsonify(ok=True, **result)
 
 
 if __name__ == "__main__":
