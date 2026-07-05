@@ -8,7 +8,6 @@ https://github.com/MarshalX/yandex-music-api
 Вся логика вынесена сюда и используется веб-оболочкой (web.py).
 """
 
-import os
 import re
 
 from dotenv import load_dotenv
@@ -19,22 +18,6 @@ import store
 # Подхватываем .env, если он есть рядом (для локального запуска без Docker —
 # там переменные окружения передаёт docker-compose, а не этот вызов).
 load_dotenv()
-
-
-# --- Настройки (можно захардкодить или задать через переменные окружения) ---
-
-# Токен аккаунта, которому принадлежит плейлист.
-# Как получить — см. get_token.py и README.md.
-TOKEN = os.environ.get("YM_TOKEN", "ВСТАВЬ_СЮДА_ТОКЕН")
-
-# Плейлист, куда падают треки. Можно указать в любом виде:
-#   - UUID:        41cb8a47-dc72-3f22-a151-f6ea27c34464
-#   - полный URL:  https://music.yandex.ru/playlists/41cb8a47-dc72-3f22-a151-f6ea27c34464
-#   - числовой kind (старый формат ссылок /users/<login>/playlists/<kind>)
-PLAYLIST = os.environ.get(
-    "YM_PLAYLIST",
-    "https://music.yandex.ru/playlists/41cb8a47-dc72-3f22-a151-f6ea27c34464",
-)
 
 
 class TrackLinkError(ValueError):
@@ -130,52 +113,38 @@ def parse_playlist_ref(ref):
     raise PlaylistError(f"Не понял, что за плейлист: {ref!r}")
 
 
-def effective_token() -> str | None:
-    """
-    Токен для работы с API: приоритет у токена, полученного через OAuth-логин
-    в админке (/admin) и сохранённого в store, иначе — бутстрап из YM_TOKEN.
-    """
-    token = store.get_token()
-    if token:
-        return token
-    if TOKEN and TOKEN != "ВСТАВЬ_СЮДА_ТОКЕН":
-        return TOKEN
-    return None
-
-
-def make_client(token: str | None = None) -> Client:
-    """Создаёт и инициализирует клиент Я.Музыки."""
-    token = token or effective_token()
-    if not token:
-        raise RuntimeError(
-            "Не задан токен. Залогинься в /admin через Яндекс либо укажи "
-            "переменную окружения YM_TOKEN. Получить токен вручную: python get_token.py"
-        )
+def make_client(token: str) -> Client:
+    """Создаёт и инициализирует клиент Я.Музыки для заданного токена."""
     return Client(token).init()
 
 
-_shared_client: Client | None = None
-_shared_client_token: str | None = None
+_clients: dict[str, tuple[str, Client]] = {}
 
 
-def get_shared_client() -> Client:
+def get_client_for_user(uid: str) -> Client:
     """
-    Общий клиент Я.Музыки на процесс. Пересобирается, если токен в store
-    изменился — например, админ только что залогинился через /admin.
-    Это же решает переинициализацию в разных воркерах gunicorn: у каждого
+    Клиент Я.Музыки конкретного пользователя (по account_uid из его OAuth-логина).
+    Кэшируется в процессе, пересобирается, если токен пользователя изменился
+    (например, он перелогинился). При нескольких воркерах gunicorn у каждого
     свой кэш, но каждый сверяется с общим файлом состояния при обращении.
     """
-    global _shared_client, _shared_client_token
-    token = effective_token()
-    if _shared_client is None or token != _shared_client_token:
-        _shared_client = make_client(token)
-        _shared_client_token = token
-    return _shared_client
+    uid = str(uid)
+    user = store.get_user(uid)
+    if not user:
+        raise RuntimeError(f"Пользователь {uid} не найден — нужно залогиниться через /login")
+
+    token = user["token"]
+    cached = _clients.get(uid)
+    if cached and cached[0] == token:
+        return cached[1]
+
+    client = make_client(token)
+    _clients[uid] = (token, client)
+    return client
 
 
-def list_own_playlists(client: Client | None = None) -> list:
-    """Плейлисты аккаунта владельца токена — для выбора в админке."""
-    client = client or get_shared_client()
+def list_own_playlists(client: Client) -> list:
+    """Плейлисты аккаунта владельца токена — для выбора в личном кабинете."""
     playlists = client.users_playlists_list() or []
     return [
         {
@@ -188,7 +157,7 @@ def list_own_playlists(client: Client | None = None) -> list:
     ]
 
 
-def resolve_playlist(client: Client, ref=PLAYLIST):
+def resolve_playlist(client: Client, ref):
     """
     Достаёт объект плейлиста по UUID, числовому kind или URL.
     У объекта есть .kind, .revision, .owner.uid, .tracks — всё, что нужно
@@ -218,8 +187,8 @@ def _resolve_album_id(client: Client, track_id: str, album_id: str | None) -> st
 
 def add_track_to_playlist(
     link: str,
-    client: Client | None = None,
-    playlist_ref=PLAYLIST,
+    client: Client,
+    playlist_ref,
 ) -> dict:
     """
     Добавляет трек по ссылке в плейлист.
@@ -227,8 +196,6 @@ def add_track_to_playlist(
     Возвращает словарь с результатом: имя трека, исполнители,
     и флаг already_exists, если трек уже был в плейлисте.
     """
-    client = client or make_client()
-
     track_id, album_id = parse_track_link(link)
     album_id = _resolve_album_id(client, track_id, album_id)
 
@@ -278,13 +245,12 @@ def playlist_url(playlist) -> str:
     return ""
 
 
-def get_playlist_tracks(client: Client | None = None, playlist_ref=PLAYLIST) -> dict:
+def get_playlist_tracks(client: Client, playlist_ref) -> dict:
     """
     Возвращает содержимое плейлиста: название, ссылку и список треков
     (title, artists) в том порядке, в котором они лежат в плейлисте
     (новые — первыми, т.к. add_track_to_playlist вставляет в начало).
     """
-    client = client or make_client()
     playlist = resolve_playlist(client, playlist_ref)
 
     info = {"playlist": playlist.title, "playlist_url": playlist_url(playlist)}
@@ -313,14 +279,13 @@ def _album_with_tracks(client: Client, album_id: str):
 
 def preview_album(
     album_id: str,
-    client: Client | None = None,
-    playlist_ref=PLAYLIST,
+    client: Client,
+    playlist_ref,
 ) -> dict:
     """
     Возвращает название альбома и список его треков (title, artists,
     already_exists) — для показа диалога подтверждения перед добавлением.
     """
-    client = client or make_client()
     album = _album_with_tracks(client, album_id)
     playlist = resolve_playlist(client, playlist_ref)
     existing_ids = {str(t.id) for t in (playlist.tracks or [])}
@@ -343,14 +308,13 @@ def preview_album(
 
 def add_album_to_playlist(
     album_id: str,
-    client: Client | None = None,
-    playlist_ref=PLAYLIST,
+    client: Client,
+    playlist_ref,
 ) -> dict:
     """
     Добавляет все треки альбома в плейлист (уже имеющиеся — пропускает).
     Возвращает название альбома и списки добавленных/уже существующих треков.
     """
-    client = client or make_client()
     album = _album_with_tracks(client, album_id)
 
     added = []

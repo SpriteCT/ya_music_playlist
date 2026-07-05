@@ -1,22 +1,21 @@
 """
 Веб-оболочка.
 
-Владелец логинится в /admin (пароль из ADMIN_PASSWORD) и авторизуется в
-Я.Музыке через OAuth device-flow прямо в браузере — токен сохраняется в
-store.py. Там же он создаёт шаринг-ссылки: каждая ссылка /s/<slug> ведёт на
-свой плейлист. Публичная форма по такой ссылке не требует авторизации —
-все треки, которые вводят гости, добавляются от имени владельца токена.
+Любой человек логинится через /login своим аккаунтом Я.Музыки (OAuth
+device-flow прямо в браузере) и получает личный кабинет на /me: свои
+плейлисты и свои шаринг-ссылки. Каждая ссылка /s/<slug> ведёт на плейлист
+конкретного пользователя. Публичная форма по такой ссылке не требует
+авторизации — треки, которые вводят гости, добавляются от имени владельца
+ссылки.
 
 Локальный запуск (dev-сервер):
     pip install -r requirements.txt
     python web.py              # http://127.0.0.1:5000
-    # открой /admin, залогинься паролем (ADMIN_PASSWORD в .env),
-    # затем войди через Яндекс и создай ссылку на плейлист
+    # открой /login, войди через Яндекс, создай ссылку на свой плейлист
 
 Прод: см. Dockerfile / docker-compose.yml (gunicorn на 0.0.0.0:8000).
 """
 
-import hmac
 import os
 import secrets
 import time
@@ -31,8 +30,8 @@ from core import (
     add_album_to_playlist,
     add_track_to_playlist,
     classify_link,
+    get_client_for_user,
     get_playlist_tracks,
-    get_shared_client,
     list_own_playlists,
     preview_album,
     TrackLinkError,
@@ -40,14 +39,12 @@ from core import (
 
 app = Flask(__name__)
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-
 _secret_key = os.environ.get("FLASK_SECRET_KEY")
 if not _secret_key:
     print(
         "ВНИМАНИЕ: FLASK_SECRET_KEY не задан — используется временный ключ, "
-        "сгенерированный при старте. Сессии админки слетят при перезапуске "
-        "процесса. Задай FLASK_SECRET_KEY в .env для прод "
+        "сгенерированный при старте. Сессии пользователей слетят при "
+        "перезапуске процесса. Задай FLASK_SECRET_KEY в .env для прод "
         '(python -c "import secrets; print(secrets.token_hex(32))").'
     )
     _secret_key = secrets.token_hex(32)
@@ -61,51 +58,44 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE") == "1",
 )
 
-# Наивный rate-limit на /admin/login: без внешних зависимостей, per-process
+# Наивный rate-limit на /oauth/start: без внешних зависимостей, per-process
 # (при нескольких воркерах gunicorn лимит общий на приложение, а не точный
-# per-IP — консервативно, но не идеально; для личного проекта достаточно).
-_LOGIN_WINDOW_S = 300
-_LOGIN_MAX_ATTEMPTS = 10
-_login_attempts: dict[str, list[float]] = {}
+# per-IP — консервативно, но не идеально). Защищает от того, чтобы наш сервер
+# использовали для спама device-code запросами в Яндекс.
+_RATE_WINDOW_S = 300
+_RATE_MAX_ATTEMPTS = 10
+_oauth_start_attempts: dict[str, list[float]] = {}
 
 
-def _login_rate_limited(ip: str) -> bool:
+def _rate_limited(bucket: dict[str, list[float]], key: str) -> bool:
     now = time.time()
-    attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW_S]
-    _login_attempts[ip] = attempts
-    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+    attempts = [t for t in bucket.get(key, []) if now - t < _RATE_WINDOW_S]
+    bucket[key] = attempts
+    return len(attempts) >= _RATE_MAX_ATTEMPTS
 
 
-def _record_login_attempt(ip: str) -> None:
-    _login_attempts.setdefault(ip, []).append(time.time())
+def _record_attempt(bucket: dict[str, list[float]], key: str) -> None:
+    bucket.setdefault(key, []).append(time.time())
 
 
-def _admin_configured() -> bool:
-    return bool(ADMIN_PASSWORD)
-
-
-def admin_page_required(view):
-    """Гейт для HTML-страниц админки: редиректит на форму логина."""
+def login_required(view):
+    """Гейт для HTML-страниц личного кабинета: редиректит на /login."""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not _admin_configured():
-            return "Админка не настроена: задай ADMIN_PASSWORD в .env", 503
-        if not session.get("admin"):
-            return redirect(url_for("admin_login"))
+        if not session.get("user_id"):
+            return redirect(url_for("login_page"))
         return view(*args, **kwargs)
 
     return wrapped
 
 
-def admin_api_required(view):
-    """Гейт для JSON-эндпоинтов админки: отвечает кодом, а не редиректом."""
+def login_required_api(view):
+    """Гейт для JSON-эндпоинтов личного кабинета: отвечает кодом, а не редиректом."""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not _admin_configured():
-            return jsonify(ok=False, error="Админка не настроена: задай ADMIN_PASSWORD в .env"), 503
-        if not session.get("admin"):
+        if not session.get("user_id"):
             return jsonify(ok=False, error="Не авторизован"), 401
         return view(*args, **kwargs)
 
@@ -135,61 +125,29 @@ def not_found(_e):
     return render_template("404.html"), 404
 
 
-# --- Админка ---
+# --- Вход через Яндекс ---
 
 
-@app.route("/admin/login", methods=["GET", "POST"])
-def admin_login():
-    if not _admin_configured():
-        return "Админка не настроена: задай ADMIN_PASSWORD в .env", 503
-
-    error = None
-    if request.method == "POST":
-        ip = request.remote_addr or "unknown"
-        if _login_rate_limited(ip):
-            error = "Слишком много попыток. Подожди немного и попробуй снова."
-        else:
-            password = request.form.get("password", "")
-            if hmac.compare_digest(password, ADMIN_PASSWORD):
-                session["admin"] = True
-                return redirect(url_for("admin_dashboard"))
-            _record_login_attempt(ip)
-            error = "Неверный пароль"
-
-    return render_template("admin_login.html", error=error)
+@app.route("/login")
+def login_page():
+    if session.get("user_id"):
+        return redirect(url_for("dashboard"))
+    return render_template("login.html")
 
 
-@app.route("/admin/logout", methods=["POST"])
-def admin_logout():
+@app.route("/logout", methods=["POST"])
+def logout():
     session.clear()
-    return redirect(url_for("admin_login"))
+    return redirect(url_for("root"))
 
 
-@app.route("/admin")
-@admin_page_required
-def admin_dashboard():
-    connected = False
-    account_label = None
-    try:
-        client = get_shared_client()
-        connected = True
-        account = getattr(client.me, "account", None) if client.me else None
-        if account:
-            account_label = account.display_name or account.login
-    except Exception:
-        pass
+@app.route("/oauth/start", methods=["POST"])
+def oauth_start():
+    ip = request.remote_addr or "unknown"
+    if _rate_limited(_oauth_start_attempts, ip):
+        return jsonify(ok=False, error="Слишком много попыток входа. Подожди немного."), 429
+    _record_attempt(_oauth_start_attempts, ip)
 
-    return render_template(
-        "admin.html",
-        connected=connected,
-        account_label=account_label,
-        links=store.list_links(),
-    )
-
-
-@app.route("/admin/oauth/start", methods=["POST"])
-@admin_api_required
-def admin_oauth_start():
     client = YMClient()
     code = client.request_device_code()
     session["oauth"] = {
@@ -204,9 +162,8 @@ def admin_oauth_start():
     )
 
 
-@app.route("/admin/oauth/poll", methods=["POST"])
-@admin_api_required
-def admin_oauth_poll():
+@app.route("/oauth/poll", methods=["POST"])
+def oauth_poll():
     oauth = session.get("oauth")
     if not oauth:
         return jsonify(ok=False, error="Нет активного запроса на вход. Начни заново."), 400
@@ -225,24 +182,52 @@ def admin_oauth_poll():
     if token is None:
         return jsonify(ok=True, status="pending")
 
-    store.set_token(token.access_token)
+    client.token = token.access_token
+    client.init()
+    account = client.me.account if client.me else None
+    if not account:
+        session.pop("oauth", None)
+        return jsonify(ok=True, status="error", error="Не удалось получить данные аккаунта.")
+
+    uid = str(account.uid)
+    login = account.display_name or account.login or ""
+    store.set_user(uid, token.access_token, login)
+
     session.pop("oauth", None)
+    session["user_id"] = uid
     return jsonify(ok=True, status="success")
 
 
-@app.route("/admin/playlists")
-@admin_api_required
-def admin_playlists():
+# --- Личный кабинет ---
+
+
+@app.route("/me")
+@login_required
+def dashboard():
+    uid = session["user_id"]
+    user = store.get_user(uid)
+    return render_template(
+        "dashboard.html",
+        account_label=user.get("login") or uid,
+        links=store.list_links_for_user(uid),
+    )
+
+
+@app.route("/me/playlists")
+@login_required_api
+def me_playlists():
+    uid = session["user_id"]
     try:
-        playlists = list_own_playlists()
+        playlists = list_own_playlists(get_client_for_user(uid))
     except Exception as e:  # noqa: BLE001
         return jsonify(ok=False, error=f"Не удалось получить плейлисты: {e}"), 500
     return jsonify(ok=True, playlists=playlists)
 
 
-@app.route("/admin/links", methods=["POST"])
-@admin_api_required
-def admin_create_link():
+@app.route("/me/links", methods=["POST"])
+@login_required_api
+def me_create_link():
+    uid = session["user_id"]
     data = request.get_json(silent=True) or {}
     label = (data.get("label") or "").strip()
     playlist_kind = data.get("playlist_kind")
@@ -250,14 +235,17 @@ def admin_create_link():
     if not label or playlist_kind is None:
         return jsonify(ok=False, error="Нужны название и плейлист"), 400
 
-    slug = store.add_link(label, str(playlist_kind), playlist_title)
+    slug = store.add_link(uid, label, str(playlist_kind), playlist_title)
     return jsonify(ok=True, slug=slug, url=url_for("collect_page", slug=slug))
 
 
-@app.route("/admin/links/<slug>/delete", methods=["POST"])
-@admin_api_required
-def admin_delete_link(slug):
-    store.delete_link(slug)
+@app.route("/me/links/<slug>/delete", methods=["POST"])
+@login_required_api
+def me_delete_link(slug):
+    uid = session["user_id"]
+    ok = store.delete_link(slug, uid)
+    if not ok:
+        return jsonify(ok=False, error="Ссылка не найдена"), 404
     return jsonify(ok=True)
 
 
@@ -278,9 +266,8 @@ def collect_add(slug):
         return jsonify(ok=False, error="Пустая ссылка"), 400
 
     try:
-        result = add_track_to_playlist(
-            track_link, client=get_shared_client(), playlist_ref=link["playlist"]
-        )
+        client = get_client_for_user(link["owner"])
+        result = add_track_to_playlist(track_link, client=client, playlist_ref=link["playlist"])
     except TrackLinkError as e:
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:  # noqa: BLE001
@@ -300,7 +287,8 @@ def collect_album_preview(slug):
         kind, album_id, _ = classify_link(track_link)
         if kind != "album":
             return jsonify(ok=False, error="Это ссылка на трек, а не на альбом целиком"), 400
-        result = preview_album(album_id, client=get_shared_client(), playlist_ref=link["playlist"])
+        client = get_client_for_user(link["owner"])
+        result = preview_album(album_id, client=client, playlist_ref=link["playlist"])
     except TrackLinkError as e:
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:  # noqa: BLE001
@@ -320,7 +308,8 @@ def collect_album_add(slug):
         kind, album_id, _ = classify_link(track_link)
         if kind != "album":
             return jsonify(ok=False, error="Это ссылка на трек, а не на альбом целиком"), 400
-        result = add_album_to_playlist(album_id, client=get_shared_client(), playlist_ref=link["playlist"])
+        client = get_client_for_user(link["owner"])
+        result = add_album_to_playlist(album_id, client=client, playlist_ref=link["playlist"])
     except TrackLinkError as e:
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:  # noqa: BLE001
@@ -333,7 +322,8 @@ def collect_album_add(slug):
 def collect_tracks(slug):
     link = _get_link_or_404(slug)
     try:
-        result = get_playlist_tracks(client=get_shared_client(), playlist_ref=link["playlist"])
+        client = get_client_for_user(link["owner"])
+        result = get_playlist_tracks(client=client, playlist_ref=link["playlist"])
     except Exception as e:  # noqa: BLE001
         return jsonify(ok=False, error=f"Не удалось получить плейлист: {e}"), 500
 

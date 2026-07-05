@@ -1,6 +1,6 @@
 """
-Персистентное состояние админки: токен, полученный через OAuth-логин
-в браузере, и шаринг-ссылки (slug -> плейлист).
+Персистентное состояние: пользователи (Я.Музыка аккаунты, вошедшие через
+OAuth) и их шаринг-ссылки (slug -> плейлист конкретного пользователя).
 
 Простое JSON-хранилище — без БД, в духе остального проекта. Путь настраивается
 через STATE_FILE (по умолчанию state.json рядом с проектом). В Docker должен
@@ -19,7 +19,7 @@ _LOCK = threading.Lock()
 
 
 def _empty_state() -> dict:
-    return {"token": None, "links": {}}
+    return {"users": {}, "links": {}}
 
 
 def _load() -> dict:
@@ -29,7 +29,7 @@ def _load() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         return _empty_state()
 
-    data.setdefault("token", None)
+    data.setdefault("users", {})
     data.setdefault("links", {})
     return data
 
@@ -40,34 +40,40 @@ def _save(data: dict) -> None:
     tmp_path = f"{_PATH}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    # Файл содержит боевой токен — читать может только владелец процесса.
-    # На Windows это no-op (нет POSIX-битов), но безвредно; в Docker/Linux
-    # прод-деплое реально ограничивает права.
+    # Файл содержит боевые токены всех пользователей — читать может только
+    # владелец процесса. На Windows это no-op (нет POSIX-битов), но безвредно;
+    # в Docker/Linux прод-деплое реально ограничивает права.
     os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
     os.replace(tmp_path, _PATH)
 
 
-def get_token() -> str | None:
-    return _load().get("token")
+def get_user(uid: str) -> dict | None:
+    """Возвращает {token, login} для аккаунта или None, если не логинился."""
+    return _load().get("users", {}).get(str(uid))
 
 
-def set_token(token: str) -> None:
+def set_user(uid: str, token: str, login: str = "") -> None:
     with _LOCK:
         data = _load()
-        data["token"] = token
+        data["users"][str(uid)] = {"token": token, "login": login}
         _save(data)
 
 
-def list_links() -> dict:
-    """Возвращает {slug: {label, playlist, created}}."""
-    return _load().get("links", {})
+def list_links_for_user(uid: str) -> dict:
+    """Возвращает {slug: {label, playlist, playlist_title, owner, created}} только этого пользователя."""
+    uid = str(uid)
+    return {
+        slug: link
+        for slug, link in _load().get("links", {}).items()
+        if link.get("owner") == uid
+    }
 
 
 def get_link(slug: str) -> dict | None:
-    return list_links().get(slug)
+    return _load().get("links", {}).get(slug)
 
 
-def add_link(label: str, playlist_ref: str, playlist_title: str = "") -> str:
+def add_link(owner_uid: str, label: str, playlist_ref: str, playlist_title: str = "") -> str:
     with _LOCK:
         data = _load()
         slug = secrets.token_urlsafe(6)
@@ -77,14 +83,20 @@ def add_link(label: str, playlist_ref: str, playlist_title: str = "") -> str:
             "label": label,
             "playlist": playlist_ref,
             "playlist_title": playlist_title,
+            "owner": str(owner_uid),
             "created": datetime.now(timezone.utc).isoformat(),
         }
         _save(data)
     return slug
 
 
-def delete_link(slug: str) -> None:
+def delete_link(slug: str, owner_uid: str) -> bool:
+    """Удаляет ссылку, только если она принадлежит owner_uid. Возвращает успех."""
     with _LOCK:
         data = _load()
-        data["links"].pop(slug, None)
+        link = data["links"].get(slug)
+        if not link or link.get("owner") != str(owner_uid):
+            return False
+        data["links"].pop(slug)
         _save(data)
+        return True

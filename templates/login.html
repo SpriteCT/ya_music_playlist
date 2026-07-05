@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход · Я.Музыка</title>
+  <style>
+    :root {
+      --stage:  #16130d;
+      --panel:  #1f1a12;
+      --edge:   #3a3020;
+      --ink:    #f3ead4;
+      --muted:  #9a8f74;
+      --amber:  #f4b942;
+      --amber-d:#c9902a;
+      --err:    #f08a7a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      display: grid; place-items: center;
+      background: radial-gradient(120% 90% at 50% -10%, #241d12 0%, var(--stage) 60%);
+      color: var(--ink);
+      font-family: "Georgia", "Times New Roman", serif;
+      padding: 24px;
+    }
+    .card {
+      width: 100%; max-width: 420px;
+      background: var(--panel);
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      padding: 40px 34px;
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,.8);
+    }
+    .eyebrow {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+      color: var(--amber);
+      margin: 0 0 14px;
+    }
+    h1 { margin: 0 0 12px; font-size: 26px; line-height: 1.15; font-weight: 700; }
+    p.sub { margin: 0 0 24px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    button {
+      width: 100%; padding: 14px;
+      background: var(--amber); color: #221a06;
+      border: 0; border-radius: 10px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 14px; letter-spacing: .06em; font-weight: 700; text-transform: uppercase;
+      cursor: pointer; transition: background .15s, transform .05s;
+    }
+    button:hover { background: var(--amber-d); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .55; cursor: default; }
+
+    .oauth-panel {
+      margin-top: 20px; padding: 16px; border: 1px dashed var(--edge); border-radius: 12px;
+      font-size: 14px; display: none;
+    }
+    .oauth-panel .code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 22px; letter-spacing: .1em; color: var(--amber); margin: 8px 0;
+    }
+    .msg { margin-top: 16px; min-height: 18px; font-size: 13px; color: var(--err); }
+    .msg:empty { margin-top: 0; min-height: 0; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <p class="eyebrow">Я.Музыка</p>
+    <h1>Вход через Яндекс</h1>
+    <p class="sub">Логин открывает доступ к твоим плейлистам и ссылкам для сбора треков.</p>
+
+    <button id="oauth-start" type="button">Войти через Яндекс</button>
+
+    <div class="oauth-panel" id="oauth-panel">
+      <p>Открой ссылку и подтверди код:</p>
+      <p><a id="oauth-url" href="#" target="_blank" rel="noopener noreferrer"></a></p>
+      <p class="code" id="oauth-code"></p>
+      <p>Жду подтверждения…</p>
+    </div>
+    <p class="msg" id="oauth-msg"></p>
+  </main>
+
+  <script>
+    const oauthBtn   = document.getElementById("oauth-start");
+    const oauthPanel = document.getElementById("oauth-panel");
+    const oauthUrl   = document.getElementById("oauth-url");
+    const oauthCode  = document.getElementById("oauth-code");
+    const oauthMsg   = document.getElementById("oauth-msg");
+
+    let pollTimer = null;
+
+    async function startOAuth() {
+      oauthBtn.disabled = true;
+      oauthMsg.textContent = "";
+      try {
+        const res = await fetch("/oauth/start", { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) {
+          oauthMsg.textContent = data.error || "Не удалось начать вход.";
+          oauthBtn.disabled = false;
+          return;
+        }
+        oauthUrl.href = data.verification_url;
+        oauthUrl.textContent = data.verification_url;
+        oauthCode.textContent = data.user_code;
+        oauthPanel.style.display = "block";
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollOAuth, Math.max(data.interval, 1) * 1000);
+      } catch (e) {
+        oauthMsg.textContent = "Сервер недоступен.";
+        oauthBtn.disabled = false;
+      }
+    }
+
+    async function pollOAuth() {
+      try {
+        const res = await fetch("/oauth/poll", { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) {
+          clearInterval(pollTimer);
+          oauthMsg.textContent = data.error || "Ошибка входа.";
+          oauthPanel.style.display = "none";
+          oauthBtn.disabled = false;
+          return;
+        }
+        if (data.status === "success") {
+          clearInterval(pollTimer);
+          window.location.href = "/me";
+        } else if (data.status === "error") {
+          clearInterval(pollTimer);
+          oauthMsg.textContent = data.error || "Не удалось войти.";
+          oauthPanel.style.display = "none";
+          oauthBtn.disabled = false;
+        }
+        // "pending" — просто ждём следующего тика
+      } catch (e) {
+        // сеть моргнула — не останавливаем поллинг
+      }
+    }
+
+    oauthBtn.addEventListener("click", startOAuth);
+  </script>
+</body>
+</html>
