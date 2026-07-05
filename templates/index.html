@@ -114,17 +114,42 @@
       font-size: 13px; color: var(--muted);
     }
     .playlist .error { color: var(--err); }
+
+    dialog#album-dialog {
+      background: var(--panel); color: var(--ink);
+      border: 1px solid var(--edge); border-radius: 18px;
+      padding: 30px; width: 100%; max-width: 460px;
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,.8);
+    }
+    dialog#album-dialog::backdrop { background: rgba(10,8,4,.72); }
+    dialog#album-dialog h2 {
+      margin: 0 0 6px; font-size: 22px; line-height: 1.2; font-weight: 700;
+    }
+    dialog#album-dialog .sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    dialog#album-dialog .tracklist { max-height: 320px; margin-bottom: 22px; }
+    dialog#album-dialog .tracklist li.already { opacity: .5; }
+    dialog#album-dialog .tracklist .tag {
+      margin-left: auto; flex: 0 0 auto;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px; color: var(--muted); align-self: center;
+    }
+    .dialog-actions { display: flex; gap: 10px; }
+    .dialog-actions button { margin-top: 0; }
+    button.secondary {
+      background: transparent; color: var(--muted); border: 1px solid var(--edge);
+    }
+    button.secondary:hover { background: transparent; color: var(--ink); border-color: var(--muted); }
   </style>
 </head>
 <body>
   <main class="card">
     <p class="eyebrow">Я.Музыка · очередь плейлиста</p>
     <h1>Скинуть трек в плейлист</h1>
-    <p class="sub">Вставь ссылку на трек из Я.Музыки — он уедет в общий плейлист.</p>
+    <p class="sub">Вставь ссылку на трек или альбом из Я.Музыки — он уедет в общий плейлист.</p>
 
-    <label for="link">Ссылка на трек</label>
+    <label for="link">Ссылка на трек или альбом</label>
     <input id="link" type="url" autocomplete="off" spellcheck="false"
-           placeholder="https://music.yandex.ru/album/…/track/…">
+           placeholder="https://music.yandex.ru/album/…/track/… или /album/…">
     <button id="go">Добавить в плейлист</button>
 
     <div id="msg" class="msg" aria-live="polite"></div>
@@ -142,15 +167,34 @@
     </section>
   </main>
 
+  <dialog id="album-dialog">
+    <h2 id="album-dialog-title">Альбом</h2>
+    <p class="sub" id="album-dialog-sub"></p>
+    <ol class="tracklist" id="album-dialog-tracks"></ol>
+    <div class="dialog-actions">
+      <button id="album-cancel" type="button" class="secondary">Отмена</button>
+      <button id="album-confirm" type="button">Добавить</button>
+    </div>
+  </dialog>
+
   <script>
     const input  = document.getElementById("link");
     const button = document.getElementById("go");
     const msg    = document.getElementById("msg");
 
+    function isAlbumLink(link) {
+      return /\/album\/\d+/.test(link) && !/\/track\/\d+/.test(link);
+    }
+
     async function submit() {
       const link = input.value.trim();
       msg.className = "msg";
       if (!link) { msg.textContent = "Сначала вставь ссылку."; msg.classList.add("err"); return; }
+
+      if (isAlbumLink(link)) {
+        await submitAlbum(link);
+        return;
+      }
 
       button.disabled = true;
       const prev = button.textContent;
@@ -184,8 +228,126 @@
       }
     }
 
+    async function submitAlbum(link) {
+      button.disabled = true;
+      const prev = button.textContent;
+      button.textContent = "Загружаю альбом…";
+
+      try {
+        const res = await fetch("/album/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ link })
+        });
+        const data = await res.json();
+
+        if (!data.ok) {
+          msg.classList.add("err");
+          msg.textContent = data.error || "Не удалось загрузить альбом.";
+          return;
+        }
+        openAlbumDialog(link, data);
+      } catch (e) {
+        msg.classList.add("err");
+        msg.textContent = "Сервер недоступен. Попробуй ещё раз.";
+      } finally {
+        button.disabled = false;
+        button.textContent = prev;
+      }
+    }
+
     button.addEventListener("click", submit);
     input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+
+    const albumDialog  = document.getElementById("album-dialog");
+    const albumTitle   = document.getElementById("album-dialog-title");
+    const albumSub     = document.getElementById("album-dialog-sub");
+    const albumTracks  = document.getElementById("album-dialog-tracks");
+    const albumCancel  = document.getElementById("album-cancel");
+    const albumConfirm = document.getElementById("album-confirm");
+
+    let pendingAlbumLink = null;
+
+    function openAlbumDialog(link, data) {
+      pendingAlbumLink = link;
+      albumTitle.textContent = data.album || "Альбом";
+
+      const newCount = data.tracks.filter(t => !t.already_exists).length;
+      albumSub.textContent = data.tracks.length === 1
+        ? "1 трек"
+        : `${data.tracks.length} треков` + (newCount < data.tracks.length ? `, новых: ${newCount}` : "");
+
+      albumTracks.innerHTML = "";
+      data.tracks.forEach((t, i) => {
+        const li = document.createElement("li");
+        if (t.already_exists) li.classList.add("already");
+
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = String(i + 1).padStart(2, "0");
+
+        const text = document.createElement("span");
+        text.textContent = t.title;
+        const artists = document.createElement("span");
+        artists.className = "artists";
+        artists.textContent = " — " + t.artists;
+        text.appendChild(artists);
+
+        li.append(n, text);
+
+        if (t.already_exists) {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = "уже есть";
+          li.appendChild(tag);
+        }
+
+        albumTracks.appendChild(li);
+      });
+
+      albumConfirm.disabled = newCount === 0;
+      albumConfirm.textContent = newCount ? `Добавить (${newCount})` : "Все уже добавлены";
+      albumDialog.showModal();
+    }
+
+    albumCancel.addEventListener("click", () => albumDialog.close());
+
+    albumConfirm.addEventListener("click", async () => {
+      if (!pendingAlbumLink) return;
+
+      albumConfirm.disabled = true;
+      const prevText = albumConfirm.textContent;
+      albumConfirm.textContent = "Добавляю…";
+
+      try {
+        const res = await fetch("/album/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ link: pendingAlbumLink })
+        });
+        const data = await res.json();
+
+        albumDialog.close();
+        msg.className = "msg";
+        if (data.ok) {
+          msg.classList.add("ok");
+          msg.textContent = `«${data.album}»: добавлено ${data.added.length}, `
+                           + `уже было ${data.already_exists.length}.`;
+          input.value = "";
+          loadPlaylist();
+        } else {
+          msg.classList.add("err");
+          msg.textContent = data.error || "Не удалось добавить альбом.";
+        }
+      } catch (e) {
+        albumDialog.close();
+        msg.className = "msg err";
+        msg.textContent = "Сервер недоступен. Попробуй ещё раз.";
+      } finally {
+        albumConfirm.disabled = false;
+        albumConfirm.textContent = prevText;
+      }
+    });
 
     const playlistBody  = document.getElementById("playlist-body");
     const playlistCount = document.getElementById("playlist-count");

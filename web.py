@@ -19,9 +19,12 @@
 from flask import Flask, jsonify, render_template, request
 
 from core import (
+    add_album_to_playlist,
     add_track_to_playlist,
+    classify_link,
     get_playlist_tracks,
     make_client,
+    preview_album,
     TrackLinkError,
     PLAYLIST,
 )
@@ -66,6 +69,44 @@ def add():
         return jsonify(ok=False, error=f"Не удалось добавить: {e}"), 500
 
     return jsonify(result)
+
+
+@app.route("/album/preview", methods=["POST"])
+def album_preview():
+    link = (request.get_json(silent=True) or {}).get("link", "")
+    if not link.strip():
+        return jsonify(ok=False, error="Пустая ссылка"), 400
+
+    try:
+        kind, album_id, _ = classify_link(link)
+        if kind != "album":
+            return jsonify(ok=False, error="Это ссылка на трек, а не на альбом целиком"), 400
+        result = preview_album(album_id, client=get_client(), playlist_ref=PLAYLIST)
+    except TrackLinkError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify(ok=False, error=f"Не удалось загрузить альбом: {e}"), 500
+
+    return jsonify(ok=True, **result)
+
+
+@app.route("/album/add", methods=["POST"])
+def album_add():
+    link = (request.get_json(silent=True) or {}).get("link", "")
+    if not link.strip():
+        return jsonify(ok=False, error="Пустая ссылка"), 400
+
+    try:
+        kind, album_id, _ = classify_link(link)
+        if kind != "album":
+            return jsonify(ok=False, error="Это ссылка на трек, а не на альбом целиком"), 400
+        result = add_album_to_playlist(album_id, client=get_client(), playlist_ref=PLAYLIST)
+    except TrackLinkError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify(ok=False, error=f"Не удалось добавить альбом: {e}"), 500
+
+    return jsonify(ok=True, **result)
 
 
 @app.route("/tracks")

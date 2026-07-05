@@ -51,6 +51,8 @@ class PlaylistError(RuntimeError):
 #   домены .ru / .com / .by / .kz
 _ALBUM_TRACK = re.compile(r"/album/(\d+)/track/(\d+)")
 _TRACK_ONLY = re.compile(r"/track/(\d+)")
+# Ссылка на альбом целиком: https://music.yandex.ru/album/3192570
+_ALBUM_ONLY = re.compile(r"/album/(\d+)(?:[/?#]|$)")
 
 
 def parse_track_link(link: str):
@@ -68,6 +70,33 @@ def parse_track_link(link: str):
     raise TrackLinkError(
         "Не похоже на ссылку трека Я.Музыки. Пример: "
         "https://music.yandex.ru/album/3192570/track/1710808"
+    )
+
+
+def classify_link(link: str):
+    """
+    Определяет, что за ссылка: трек или альбом целиком.
+
+    Возвращает ('track', track_id, album_id|None) или ('album', album_id, None).
+    """
+    link = link.strip()
+
+    m = _ALBUM_TRACK.search(link)
+    if m:
+        return "track", m.group(2), m.group(1)
+
+    m = _TRACK_ONLY.search(link)
+    if m:
+        return "track", m.group(1), None
+
+    m = _ALBUM_ONLY.search(link)
+    if m:
+        return "album", m.group(1), None
+
+    raise TrackLinkError(
+        "Не похоже на ссылку трека или альбома Я.Музыки. Примеры: "
+        "https://music.yandex.ru/album/3192570/track/1710808 (трек), "
+        "https://music.yandex.ru/album/3192570 (альбом целиком)"
     )
 
 
@@ -224,3 +253,69 @@ def get_playlist_tracks(client: Client | None = None, playlist_ref=PLAYLIST) -> 
         for t in full_tracks
     ]
     return {**info, "tracks": tracks}
+
+
+def _album_with_tracks(client: Client, album_id: str):
+    album = client.albums_with_tracks(album_id)
+    if not album:
+        raise TrackLinkError(f"Альбом не найден: {album_id}")
+    return album
+
+
+def preview_album(
+    album_id: str,
+    client: Client | None = None,
+    playlist_ref=PLAYLIST,
+) -> dict:
+    """
+    Возвращает название альбома и список его треков (title, artists,
+    already_exists) — для показа диалога подтверждения перед добавлением.
+    """
+    client = client or make_client()
+    album = _album_with_tracks(client, album_id)
+    playlist = resolve_playlist(client, playlist_ref)
+    existing_ids = {str(t.id) for t in (playlist.tracks or [])}
+
+    tracks = [
+        {
+            "title": track.title or f"track {track.id}",
+            "artists": ", ".join(a.name for a in track.artists) or "—",
+            "already_exists": str(track.id) in existing_ids,
+        }
+        for volume in (album.volumes or [])
+        for track in volume
+    ]
+
+    return {
+        "album": album.title or f"альбом {album_id}",
+        "tracks": tracks,
+    }
+
+
+def add_album_to_playlist(
+    album_id: str,
+    client: Client | None = None,
+    playlist_ref=PLAYLIST,
+) -> dict:
+    """
+    Добавляет все треки альбома в плейлист (уже имеющиеся — пропускает).
+    Возвращает название альбома и списки добавленных/уже существующих треков.
+    """
+    client = client or make_client()
+    album = _album_with_tracks(client, album_id)
+
+    added = []
+    already_exists = []
+
+    for volume in album.volumes or []:
+        for track in volume:
+            link = f"https://music.yandex.ru/album/{album_id}/track/{track.id}"
+            result = add_track_to_playlist(link, client=client, playlist_ref=playlist_ref)
+            entry = {"title": result["title"], "artists": result["artists"]}
+            (already_exists if result["already_exists"] else added).append(entry)
+
+    return {
+        "album": album.title or f"альбом {album_id}",
+        "added": added,
+        "already_exists": already_exists,
+    }
