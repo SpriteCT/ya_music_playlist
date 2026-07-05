@@ -191,18 +191,29 @@ def add_track_to_playlist(
     }
 
 
+def playlist_url(playlist) -> str:
+    """Ссылка на плейлист в вебе Я.Музыки."""
+    if playlist.playlist_uuid:
+        return f"https://music.yandex.ru/playlists/{playlist.playlist_uuid}"
+    if playlist.owner and playlist.kind is not None:
+        return f"https://music.yandex.ru/users/{playlist.owner.uid}/playlists/{playlist.kind}"
+    return ""
+
+
 def get_playlist_tracks(client: Client | None = None, playlist_ref=PLAYLIST) -> dict:
     """
-    Возвращает содержимое плейлиста: название и список треков (title, artists)
-    в том порядке, в котором они лежат в плейлисте (новые — первыми, т.к.
-    add_track_to_playlist вставляет в начало).
+    Возвращает содержимое плейлиста: название, ссылку и список треков
+    (title, artists) в том порядке, в котором они лежат в плейлисте
+    (новые — первыми, т.к. add_track_to_playlist вставляет в начало).
     """
     client = client or make_client()
     playlist = resolve_playlist(client, playlist_ref)
 
+    info = {"playlist": playlist.title, "playlist_url": playlist_url(playlist)}
+
     short_tracks = playlist.tracks or []
     if not short_tracks:
-        return {"playlist": playlist.title, "tracks": []}
+        return {**info, "tracks": []}
 
     full_tracks = client.tracks([t.track_id for t in short_tracks])
     tracks = [
@@ -212,4 +223,4 @@ def get_playlist_tracks(client: Client | None = None, playlist_ref=PLAYLIST) -> 
         }
         for t in full_tracks
     ]
-    return {"playlist": playlist.title, "tracks": tracks}
+    return {**info, "tracks": tracks}

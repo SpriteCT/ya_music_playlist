@@ -74,6 +74,7 @@
       margin-top: 20px; min-height: 22px;
       font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.5;
     }
+    .msg:empty { margin-top: 0; min-height: 0; }
     .msg.ok  { color: var(--ok); }
     .msg.err { color: var(--err); }
     .msg .track { color: var(--ink); }
@@ -86,9 +87,17 @@
       margin: 0 0 14px;
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
-      display: flex; align-items: baseline; justify-content: space-between;
+      display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
     }
-    .playlist h2 .count { color: var(--amber); }
+    .playlist h2 .count { color: var(--amber); flex: 0 0 auto; }
+    .playlist h2 a {
+      color: var(--muted); text-decoration: none; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .playlist h2 a:hover { color: var(--amber); text-decoration: underline; }
+    input.search {
+      padding: 10px 14px; margin-bottom: 12px; font-size: 13px;
+    }
     .tracklist {
       list-style: none; margin: 0; padding: 0;
       max-height: 280px; overflow-y: auto;
@@ -121,7 +130,12 @@
     <div id="msg" class="msg" aria-live="polite"></div>
 
     <section class="playlist">
-      <h2><span>Текущий плейлист</span><span class="count" id="playlist-count"></span></h2>
+      <h2>
+        <a id="playlist-link" href="#" target="_blank" rel="noopener noreferrer">Текущий плейлист</a>
+        <span class="count" id="playlist-count"></span>
+      </h2>
+      <input id="search" class="search" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Поиск по плейлисту…" style="display:none">
       <div id="playlist-body">
         <p class="loading">Загружаю…</p>
       </div>
@@ -155,10 +169,8 @@
           msg.classList.add("ok");
           msg.innerHTML = (data.already_exists ? "Уже в плейлисте: " : "Добавлено: ")
                         + `<span class="track">${who}</span>`;
-          if (!data.already_exists) {
-            input.value = "";
-            loadPlaylist();
-          }
+          input.value = "";
+          loadPlaylist();
         } else {
           msg.classList.add("err");
           msg.textContent = data.error || "Что-то пошло не так.";
@@ -177,6 +189,48 @@
 
     const playlistBody  = document.getElementById("playlist-body");
     const playlistCount = document.getElementById("playlist-count");
+    const playlistLink  = document.getElementById("playlist-link");
+    const search        = document.getElementById("search");
+
+    let allTracks = [];
+
+    function renderTracks(tracksArr) {
+      playlistCount.textContent = allTracks.length ? `· ${tracksArr.length}/${allTracks.length}` : "";
+
+      if (!tracksArr.length) {
+        playlistBody.innerHTML = "";
+        playlistBody.appendChild(el("p", "empty", allTracks.length ? "Ничего не нашлось." : "Пока пусто."));
+        return;
+      }
+
+      const list = document.createElement("ol");
+      list.className = "tracklist";
+      tracksArr.forEach(t => {
+        const li = document.createElement("li");
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = String(t.n).padStart(2, "0");
+        const text = document.createElement("span");
+        text.textContent = t.title;
+        const artists = document.createElement("span");
+        artists.className = "artists";
+        artists.textContent = " — " + t.artists;
+        text.appendChild(artists);
+        li.append(n, text);
+        list.appendChild(li);
+      });
+
+      playlistBody.innerHTML = "";
+      playlistBody.appendChild(list);
+    }
+
+    function applySearch() {
+      const q = search.value.trim().toLowerCase();
+      const filtered = q
+        ? allTracks.filter(t => (t.title + " " + t.artists).toLowerCase().includes(q))
+        : allTracks;
+      renderTracks(filtered);
+    }
 
     async function loadPlaylist() {
       try {
@@ -187,40 +241,29 @@
           playlistBody.innerHTML = "";
           playlistBody.appendChild(el("p", "error", data.error || "Не удалось загрузить плейлист."));
           playlistCount.textContent = "";
+          playlistLink.textContent = "Текущий плейлист";
+          playlistLink.removeAttribute("href");
+          search.style.display = "none";
+          allTracks = [];
           return;
         }
 
-        playlistCount.textContent = data.tracks.length ? `· ${data.tracks.length}` : "";
-
-        if (!data.tracks.length) {
-          playlistBody.innerHTML = "";
-          playlistBody.appendChild(el("p", "empty", "Пока пусто."));
-          return;
+        playlistLink.textContent = data.playlist || "Текущий плейлист";
+        if (data.playlist_url) {
+          playlistLink.href = data.playlist_url;
+        } else {
+          playlistLink.removeAttribute("href");
         }
 
-        const list = document.createElement("ol");
-        list.className = "tracklist";
-        data.tracks.forEach((t, i) => {
-          const li = document.createElement("li");
-          const n = document.createElement("span");
-          n.className = "n";
-          n.textContent = String(i + 1).padStart(2, "0");
-          const text = document.createElement("span");
-          text.textContent = t.title;
-          const artists = document.createElement("span");
-          artists.className = "artists";
-          artists.textContent = " — " + t.artists;
-          text.appendChild(artists);
-          li.append(n, text);
-          list.appendChild(li);
-        });
-
-        playlistBody.innerHTML = "";
-        playlistBody.appendChild(list);
+        allTracks = data.tracks.map((t, i) => ({ ...t, n: i + 1 }));
+        search.style.display = allTracks.length ? "" : "none";
+        applySearch();
       } catch (e) {
         playlistBody.innerHTML = "";
         playlistBody.appendChild(el("p", "error", "Сервер недоступен."));
         playlistCount.textContent = "";
+        search.style.display = "none";
+        allTracks = [];
       }
     }
 
@@ -230,6 +273,8 @@
       e.textContent = text;
       return e;
     }
+
+    search.addEventListener("input", applySearch);
 
     loadPlaylist();
   </script>
